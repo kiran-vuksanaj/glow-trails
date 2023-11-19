@@ -11,11 +11,13 @@ module trail_iir
     parameter DECAY = 32'b1111_1100_0000_0000_0000_0000_0000_0000
 )
    (
-    input wire clk_in,
-    input wire rst_in,
-    input wire [COLOR_DEPTH-1:0] history_in,
-    input wire [COLOR_DEPTH-1:0] camera_in,
-    output logic [COLOR_DEPTH-1:0] update_out
+    input wire 			   clk_in,
+    input wire 			   rst_in,
+    input wire 			   valid_in,
+    input wire [COLOR_DEPTH-1:0]   history_in,
+    input wire [COLOR_DEPTH-1:0]   camera_in,
+    output logic [COLOR_DEPTH-1:0] update_out,
+    output logic 		   valid_out
     );
 
    logic [31:0] 		   multiplier;
