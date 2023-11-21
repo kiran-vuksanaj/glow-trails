@@ -45,7 +45,8 @@ module trail_iir
    // TOTAL CLOCK CYCLE LATENCY: 1
    // THROUGHPUT: 1/clk
    always_ff @(posedge clk_in) begin
-      update_out <= (history_y > THRESHOLD) ? (history_decayed) : camera_in;
+      update_out <= (history_y > THRESHOLD) ? (history_decayed) : camera_in; // Could this be causing decay problems because if you have a stall, the cell decays? Kiran will test, possible solution is to replace this line with the one below:
+	  // update_out <= (history_y > THRESHOLD && history_y < camera_in[COLOR_DEPTH-1:COLOR_DEPTH-Y_BITS]) ? (history_decayed) : camera_in; 
    end
    
 

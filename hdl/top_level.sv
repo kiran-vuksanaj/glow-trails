@@ -115,13 +115,13 @@ module top_level(
    logic [15:0]   pixel_data_rec_pipe [5:0];
 
    // RGB to YCrCb
-   logic [9:0] 	r_in;
+   logic [7:0] 	r_in;
    assign r_in = {pixel_data_rec[15:11],3'b0};
    // assign r_in = {pixel_data_rec_pipe[2][15:11],3'b0};
-   logic [9:0] 	g_in;
+   logic [7:0] 	g_in;
    assign g_in = {pixel_data_rec[10:5],2'b0};
    // assign g_in = {pixel_data_rec_pipe[2][10:5],2'b0};
-   logic [9:0] 	b_in;
+   logic [7:0] 	b_in;
    assign b_in = {pixel_data_rec[4:0],3'b0};
    // assign b_in = {pixel_data_rec_pipe[2][4:0],3'b0};
    logic [9:0] 	y_out;
@@ -295,6 +295,9 @@ module top_level(
 
    assign pixel_vsg = valid_addr_rot_pipe[1] ? pixel_vsg_raw : 0;
 
+   logic [9:0] red_full;
+   logic [9:0] green_full;
+   logic [9:0] blue_full;
    logic [7:0] red;
    logic [7:0] green;
    logic [7:0] blue;
@@ -306,10 +309,15 @@ module top_level(
       .y( {pixel_vsg[7:4],4'b0} ),
       .cr( {pixel_vsg[3:2],6'b0} ),
       .cb( {pixel_vsg[1:0],6'b0} ),
-      .r( red ),
-      .g( green ),
-      .b( blue )
+      .r( red_full ),
+      .g( green_full ),
+      .b( blue_full )
       );
+	  
+   assign red = red_full[7:0];
+   assign green = green_full[7:0];
+   assign blue = blue_full[7:0];
+
    logic [9:0] tmds_10b [0:2]; //output of each TMDS encoder!
    logic       tmds_signal [2:0]; //output of each TMDS serializer!
 
