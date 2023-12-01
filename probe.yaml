@@ -1,0 +1,23 @@
+---
+cores:
+
+  cam_logic_analyzer:
+    type: logic_analyzer
+    sample_depth: 1024
+    probes:
+      data_valid_rec: 1
+      memaddr_cam: 17
+      hcount_rec: 11
+      vcount_rec: 10
+      pixel_data_rec: 16
+      memaddr_cam0: 17
+      data_valid0: 1
+      pixel_data0: 16
+    trigger_loc: 1000
+    triggers:
+      - data_valid_rec RISING
+
+uart:
+  port: "/dev/ttyUSB1"
+  baudrate: 3000000
+  clock_freq: 74250000
