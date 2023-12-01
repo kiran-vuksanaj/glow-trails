@@ -40,7 +40,7 @@ module trail_rgb_tb();
       #10;
       rst_in = 0;
       #56;
-      // test cases, sparse!
+      // test cases, sparse
       history_in = 24'h000000;
       camera_in = 24'h123456;
       valid_in = 1;
@@ -54,7 +54,16 @@ module trail_rgb_tb();
       #10;
       valid_in = 0;
       #50;
-      
+      // test cases, dense
+      history_in = 24'hFFEEDD;
+      camera_in = 24'h543210;
+      valid_in = 1;
+      #10;
+      history_in = 24'h543210;
+      camera_in = 24'h654321;
+      #10;
+      history_in = 24'hEEEEEE;
+      camera_in = 24'hFFFFFF;
       
       // finish
       #100;
