@@ -14,15 +14,21 @@ module top_level(
 		 input wire [7:0]    pmoda,
 		 input wire [2:0]    pmodb,
 		 output logic 	     pmodbclk,
-		 output logic 	     pmodblock
+		 output logic 	     pmodblock,
+		 input wire 	     uart_rxd,
+		 output logic 	     uart_txd
 		 );
 
-   parameter COLOR_DEPTH = 8;
+   parameter COLOR_DEPTH = 12;
 
    assign led = sw; //for debugging
    // //shut up those rgb LEDs (active high):
    // assign rgb1= 0;
    // assign rgb0 = 0;
+
+   logic [7:0] 			     threshold;
+   assign threshold = sw[15:8];
+   
 
    logic 			     sys_rst;
    assign sys_rst = btn[0];
@@ -105,75 +111,72 @@ module top_level(
       .hcount_out(hcount_rec), //corresponding hcount of camera pixel
       .vcount_out(vcount_rec) //corresponding vcount of camera pixel
       );
-   logic 	data_valid_rec_pipe;
-   always_ff @(posedge clk_pixel) begin
-      data_valid_rec_pipe <= data_valid_rec;
-   end
-   
 
-   logic [$clog2(320*240):0] memaddr_cam_pipe [5:0];
-   logic [15:0]   pixel_data_rec_pipe [5:0];
-
-   // RGB to YCrCb
-   logic [7:0] 	r_in;
-   assign r_in = {pixel_data_rec[15:11],3'b0};
-   // assign r_in = {pixel_data_rec_pipe[2][15:11],3'b0};
-   logic [7:0] 	g_in;
-   assign g_in = {pixel_data_rec[10:5],2'b0};
-   // assign g_in = {pixel_data_rec_pipe[2][10:5],2'b0};
-   logic [7:0] 	b_in;
-   assign b_in = {pixel_data_rec[4:0],3'b0};
-   // assign b_in = {pixel_data_rec_pipe[2][4:0],3'b0};
-   logic [9:0] 	y_out;
-   logic [9:0] 	cr_out;
-   logic [9:0] 	cb_out;
-   rgb_to_ycrcb camera_cs_conv_m
-     (.clk_in(clk_pixel),
-      .r_in(r_in),
-      .g_in(g_in),
-      .b_in(b_in),
-      .y_out(y_out),
-      .cr_out(cr_out),
-      .cb_out(cb_out)
-      );
-   logic [COLOR_DEPTH-1:0] camera_pxl;
-   assign camera_pxl = {y_out[7:4], cr_out[7:6], cb_out[7:6]};
-   
-   // combinational logic hcount+vcount --> address
-   logic [$clog2(320*240):0] memaddr_cam;
+   logic [16:0] memaddr_cam;
    assign memaddr_cam = hcount_rec + 320*vcount_rec;
-   
-   // pipeline for camera->memory addresses, camera data
-   
+
+   // pipeline of recover module output
+   parameter PIPE_REC = 4;
+   logic [16:0] memaddr_cam_pipe [PIPE_REC-1:0];
+   logic [15:0] pixel_data_rec_pipe [PIPE_REC-1:0];
+   logic 	data_valid_rec_pipe [PIPE_REC-1:0];
+
    always_ff @(posedge clk_pixel) begin
-      if (data_valid_rec) begin
+      if (sys_rst) begin
+	 memaddr_cam_pipe[0] <= 0;
+	 pixel_data_rec_pipe[0] <= 0;
+	 data_valid_rec_pipe[0] <= 0;
+      end else begin
 	 memaddr_cam_pipe[0] <= memaddr_cam;
-	 pixel_data_rec_pipe[0] <= camera_pxl;
-	 for(int i=1; i<=5; i+=1) begin
+	 pixel_data_rec_pipe[0] <= pixel_data_rec;
+	 data_valid_rec_pipe[0] <= data_valid_rec;
+	 for( int i=1; i<PIPE_REC; i+=1 ) begin
 	    memaddr_cam_pipe[i] <= memaddr_cam_pipe[i-1];
 	    pixel_data_rec_pipe[i] <= pixel_data_rec_pipe[i-1];
+	    data_valid_rec_pipe[i] <= data_valid_rec_pipe[i-1];
 	 end
       end
-   end
+   end // always_ff @ (posedge clk_pixel)
+	 
 
+   // trail iir algorithm; 
+   logic [COLOR_DEPTH-1:0] history_pixel;
+   logic [23:0] 	   history_pixel_full;
+   assign history_pixel_full = {
+				history_pixel[11:8],4'b0,
+				history_pixel[7:4],4'b0,
+				history_pixel[3:0],4'b0
+				};
+
+   logic [23:0] 	   camera_pixel_full;
+   assign camera_pixel_full = {
+			       pixel_data_rec_pipe[1][15:11], 3'b0,
+			       pixel_data_rec_pipe[1][10:5], 2'b0,
+			       pixel_data_rec_pipe[1][4:0], 3'b0
+			       };
+
+   logic [23:0] 	   update_pixel_full;
+   logic [COLOR_DEPTH-1:0] update_pixel;
+   assign update_pixel = {
+			  update_pixel_full[23:20],
+			  update_pixel_full[15:12],
+			  update_pixel_full[7:4]
+			  };
    
-   // IIR module
-   logic [COLOR_DEPTH-1:0] history_pxl;
-   logic [COLOR_DEPTH-1:0] update_pxl;
    logic 		   data_valid_iir;
-   
-   trail_iir #
-     (.COLOR_DEPTH(COLOR_DEPTH)) 
-   iir
-     (
-      .clk_in(clk_pixel),
+
+   trail_iir trail_generator
+     (.clk_in(clk_pixel),
       .rst_in(sys_rst),
-      .history_in(history_pxl),
-      .valid_in(data_valid_rec), // SUS
-      .camera_in(camera_pxl),
-      .update_out(update_pxl),
+      .threshold_in(threshold),
+      .valid_in(data_valid_rec_pipe[1]),
+      .history_in(history_pixel_full),
+      .camera_in(camera_pixel_full),
+      .update_out(update_pixel_full),
       .valid_out(data_valid_iir)
       );
+
+			       
 
 
    // two port BRAM for IIR update; written data matches exactly between both BRAMs!
@@ -190,12 +193,12 @@ module top_level(
       .ena(1'b1),
       .regcea(1'b1),
       .rsta(sys_rst),
-      .douta(history_pxl),
+      .douta(history_pixel),
       // port b
-      .addrb(memaddr_cam_pipe[2]),
+      .addrb(memaddr_cam_pipe[3]),
       .clkb(clk_pixel),
       .web(data_valid_iir),
-      .dinb(update_pxl),
+      .dinb(update_pixel),
       .enb(1'b1),
       .regceb(1'b1),
       .doutb()
@@ -242,10 +245,10 @@ module top_level(
       .douta(pixel_vsg_raw),
       .rsta(sys_rst),
       // port b
-      .addrb(memaddr_cam),
+      .addrb(memaddr_cam_pipe[3]),
       .clkb(clk_pixel),
-      .web(data_valid_rec_pipe),
-      .dinb(camera_pxl),
+      .web(data_valid_iir),
+      .dinb(update_pixel),
       .enb(1'b1),
       .regceb(1'b1),
       .doutb()
@@ -295,28 +298,13 @@ module top_level(
 
    assign pixel_vsg = valid_addr_rot_pipe[1] ? pixel_vsg_raw : 0;
 
-   logic [9:0] red_full;
-   logic [9:0] green_full;
-   logic [9:0] blue_full;
    logic [7:0] red;
    logic [7:0] green;
    logic [7:0] blue;
    
-   
-   ycrcb2rgb vsg_converter
-     (.clk(clk_pixel),
-      .ena(1'b1),
-      .y( {pixel_vsg[7:4],4'b0} ),
-      .cr( {pixel_vsg[3:2],6'b0} ),
-      .cb( {pixel_vsg[1:0],6'b0} ),
-      .r( red_full ),
-      .g( green_full ),
-      .b( blue_full )
-      );
-	  
-   assign red = red_full[7:0];
-   assign green = green_full[7:0];
-   assign blue = blue_full[7:0];
+   assign red = {pixel_vsg[11:8],4'b0};
+   assign green = {pixel_vsg[7:4],4'b0};
+   assign blue = {pixel_vsg[3:0],4'b0};
 
    logic [9:0] tmds_10b [0:2]; //output of each TMDS encoder!
    logic       tmds_signal [2:0]; //output of each TMDS serializer!
@@ -380,8 +368,20 @@ module top_level(
    OBUFDS OBUFDS_red  (.I(tmds_signal[2]), .O(hdmi_tx_p[2]), .OB(hdmi_tx_n[2]));
    OBUFDS OBUFDS_clock(.I(clk_pixel), .O(hdmi_clk_p), .OB(hdmi_clk_n));
    
-      
-   
+   // manta!
+   // manta manta_inst
+   //   (.clk(clk_pixel),
+   //    .rx(uart_rxd),
+   //    .tx(uart_txd),
+   //    .data_valid_rec(data_valid_rec),
+   //    .memaddr_cam(memaddr_cam),
+   //    .hcount_rec(hcount_rec),
+   //    .vcount_rec(vcount_rec),
+   //    .pixel_data_rec(pixel_data_rec),
+   //    .memaddr_cam0(memaddr_cam_pipe[2]),
+   //    .data_valid0(data_valid_rec_pipe[2]),
+   //    .pixel_data0(pixel_data_rec_pipe[2])
+   //    );
 
 
 endmodule // top_level

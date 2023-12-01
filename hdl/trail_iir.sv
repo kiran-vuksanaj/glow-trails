@@ -3,52 +3,86 @@
 
 module trail_iir
   #(
-    parameter Y_BITS = 4,
-    parameter CB_BITS = 2,
-    parameter CR_BITS = 2,
-    parameter COLOR_DEPTH = 8, // should be sum of prev 3
-    parameter THRESHOLD = 11,
-    parameter DECAY = 32'b1111_1100_0000_0000_0000_0000_0000_0000
+    // parameter THRESHOLD = 216, // currently not in use, moved threshold to be controlled by switches
+    parameter DECAY = 24'b111110101110000101000111 // 0.98 to binary fraction
 )
    (
-    input wire 			   clk_in,
-    input wire 			   rst_in,
-    input wire 			   valid_in,
-    input wire [COLOR_DEPTH-1:0]   history_in,
-    input wire [COLOR_DEPTH-1:0]   camera_in,
-    output logic [COLOR_DEPTH-1:0] update_out,
-    output logic 		   valid_out
+    input wire 		clk_in,
+    input wire 		rst_in,
+    input wire [7:0] 	threshold_in,
+    input wire 		valid_in,
+    input wire [23:0] 	history_in,
+    input wire [23:0] 	camera_in,
+    output logic [23:0] update_out,
+    output logic 	valid_out
     );
+   
 
-   logic [31:0] 		   multiplier;
-   assign multiplier = DECAY >> Y_BITS;
-   
-   // encoded {YYYYRRBB} for now
-   logic [Y_BITS-1:0] 		   history_y;
-   logic [CR_BITS-1:0] 		   history_cr;
-   logic [CB_BITS-1:0] 		   history_cb;
-   assign history_y = history_in[COLOR_DEPTH-1:COLOR_DEPTH-Y_BITS];
-   assign history_cr = history_in[CB_BITS+CR_BITS-1:CB_BITS];
-   assign history_cb = history_in[CB_BITS-1:0];
+   logic [7:0] 		history_y;
+   logic [7:0] 		camera_y;
+   rgb_to_y history_rgby
+     (.clk_in(clk_in),
+      .rst_in(rst_in),
+      .red_in(history_in[23:16]),
+      .green_in(history_in[15:8]),
+      .blue_in(history_in[7:0]),
+      .y_out(history_y)
+      );
 
-   logic [31:0] 		   y_decayed_32b;
-   assign y_decayed_32b = (multiplier*history_y);
+   rgb_to_y camera_rgby
+     (.clk_in(clk_in),
+      .rst_in(rst_in),
+      .red_in(camera_in[23:16]),
+      .green_in(camera_in[15:8]),
+      .blue_in(camera_in[7:0]),
+      .y_out(camera_y)
+      );
 
-   logic [Y_BITS-1:0] 		   y_decayed;
-   assign y_decayed = y_decayed_32b[31:32-Y_BITS];
+   // delay 1 cycle to match luminance
+   logic [23:0] 	history_buf;
+   logic [23:0] 	camera_buf;
+   logic 		valid_buf;
    
-   
-   logic [COLOR_DEPTH-1:0] 	   history_decayed;
-   assign history_decayed = { y_decayed, history_cr, history_cb }; // right now its just plain subtractin
-   
-   // implementation to come!
-   // TOTAL CLOCK CYCLE LATENCY: 1
-   // THROUGHPUT: 1/clk
    always_ff @(posedge clk_in) begin
-      update_out <= (history_y > THRESHOLD) ? (history_decayed) : camera_in; // Could this be causing decay problems because if you have a stall, the cell decays? Kiran will test, possible solution is to replace this line with the one below:
-	  // update_out <= (history_y > THRESHOLD && history_y < camera_in[COLOR_DEPTH-1:COLOR_DEPTH-Y_BITS]) ? (history_decayed) : camera_in; 
+      history_buf <= history_in;
+      camera_buf <= camera_in;
+      valid_buf <= valid_in;
    end
+
+   // calculate decay on buffered history
+   logic [31:0] decay_r_full;
+   logic [31:0] decay_g_full;
+   logic [31:0] decay_b_full;
    
+   logic [7:0] decay_r;
+   logic [7:0] decay_g;
+   logic [7:0] decay_b;
+   
+   assign decay_r_full = (history_buf[23:16])*DECAY;
+   assign decay_g_full = (history_buf[15:8])*DECAY;
+   assign decay_b_full = (history_buf[7:0])*DECAY;
+
+   assign decay_r = decay_r_full >> 24;
+   assign decay_g = decay_g_full >> 24;
+   assign decay_b = decay_b_full >> 24;
+   
+   logic [23:0] hisbuf_decay;
+   assign hisbuf_decay = {decay_r,decay_g,decay_b};
+   
+   always_ff @(posedge clk_in) begin
+      if (rst_in) begin
+	 valid_out <= 1'b0;
+	 update_out <= 0;
+	 
+      end else if (valid_buf) begin
+	 valid_out <= 1'b1;
+	 update_out <= (history_y > camera_y && history_y > threshold_in) ? hisbuf_decay : camera_buf;
+	 
+      end else begin
+	 valid_out <= 1'b0;
+      end
+   end
+      
 
 endmodule // trail_iir
 
