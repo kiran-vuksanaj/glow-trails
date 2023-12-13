@@ -13,9 +13,13 @@ module scale(
    logic [10:0] 		 hcount2;
    logic [9:0] 			 vcount2;
    logic [10:0] 		 hcount4;
+   logic [9:0] 			 vcount4;
+   
    assign hcount2 = hcount_in >>> 1;
    assign hcount4 = hcount_in >>> 2;
    assign vcount2 = vcount_in >>> 1;
+   assign vcount4 = vcount_in >>> 2;
+   
    always_comb begin
       case ( scale_in )
 	2'b00: begin
@@ -24,7 +28,7 @@ module scale(
 	end
 	2'b10: begin
            scaled_hcount_out = hcount4;
-           scaled_vcount_out = vcount2;
+           scaled_vcount_out = vcount4;
 	end
 	2'b11: begin
            scaled_hcount_out = hcount2;
@@ -36,7 +40,7 @@ module scale(
 	end
       endcase
    end
-   assign valid_addr_out = (scaled_hcount_out < 240 && scaled_vcount_out < 320);
+   assign valid_addr_out = (scaled_vcount_out < 240 && scaled_hcount_out < 320);
 endmodule
 
 
