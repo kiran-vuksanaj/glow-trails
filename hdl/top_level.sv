@@ -21,7 +21,7 @@ module top_level(
 
    parameter COLOR_DEPTH = 12;
 
-   assign led = sw; //for debugging
+   // assign led = sw; //for debugging
    // //shut up those rgb LEDs (active high):
    // assign rgb1= 0;
    // assign rgb0 = 0;
@@ -35,108 +35,102 @@ module top_level(
 
    // attempts to copy from lab 05
    //Clocking Variables:
-   logic 			     clk_pixel, clk_5x; //clock lines (pixel clock and 1/2 tmds clock)
+   logic 			     clk_pixel, clk_5x, clk_camera; //clock lines (pixel clock and 1/2 tmds clock and camera clock)
    logic 			     locked; //locked signal (we'll leave unused but still hook it up)
 
    //clock manager...creates 74.25 Hz and 5 times 74.25 MHz for pixel and TMDS,respectively
-   hdmi_clk_wiz_720p mhdmicw 
+   // and also 192MHz, excess clock for reading ov5640 output
+   cam_hdmi_clk_wiz mhdmicw 
      (
       .clk_pixel(clk_pixel),
-      .clk_tmds(clk_5x),
+      .clk_5x(clk_5x),
+      .clk_cam(clk_camera),
       .reset(0),
       .locked(locked),
-      .clk_ref(clk_100mhz)
+      .clk_in1(clk_100mhz)
       );
    
-   //camera module: (see datasheet)
-   logic 			     cam_clk_buff, cam_clk_in; //returning camera clock
-   logic 			     vsync_buff, vsync_in; //vsync signals from camera
-   logic 			     href_buff, href_in; //href signals from camera
-   logic [7:0] 			     pixel_buff, pixel_in; //pixel lines from camera
-   logic [15:0] 		     cam_pixel; //16 bit 565 RGB image from camera
-   logic 			     valid_pixel; //indicates valid pixel from camera
-   logic 			     frame_done; //indicates completion of frame from camera
-
-   //Clock domain crossing to synchronize the camera's clock
-
-   //to be back on the [65MHz] 74.25MHz system clock, delayed by a clock cycle.
-   always_ff @(posedge clk_pixel) begin
-      cam_clk_buff <= pmodb[0]; //sync camera
-      cam_clk_in <= cam_clk_buff;
-      vsync_buff <= pmodb[1]; //sync vsync signal
-      vsync_in <= vsync_buff;
-      href_buff <= pmodb[2]; //sync href signal
-      href_in <= href_buff;
-      pixel_buff <= pmoda; //sync pixels
-      pixel_in <= pixel_buff;
+  // clock domain crossing: kiran style
+   logic [2:0] pmodb_buf; // buffer, to make sure values only update on our clock domain!p
+   logic [7:0] pmoda_buf;
+   always_ff @(posedge clk_camera) begin
+      pmoda_buf <= pmoda;
+      pmodb_buf <= pmodb;
    end
 
-  //Controls and Processes Camera information
-  camera camera_m
-    (
-     .clk_pixel_in(clk_pixel),
-     .pmodbclk(pmodbclk), //data lines in from camera
-     .pmodblock(pmodblock), //
-     //returned information from camera (raw):
-     .cam_clk_in(cam_clk_in),
-     .vsync_in(vsync_in),
-     .href_in(href_in),
-     .pixel_in(pixel_in),
-     //output framed info from camera for processing:
-     .pixel_out(cam_pixel), //16 bit 565 RGB pixel
-     .pixel_valid_out(valid_pixel), //pixel valid signal
-     .frame_done_out(frame_done) //single-cycle indicator of finished frame
-     );
+   logic hsync_raw;
+   logic hsync;
+   logic vsync_raw;
+   logic vsync;
+   logic clk_rise; // prbly not necessary
+   logic [15:0] data;
+   logic 	valid_pixel;
+    
    
-   //outputs of the recover module
-   logic [15:0] pixel_data_rec; // pixel data from recovery module
-   logic [10:0] hcount_rec; //hcount from recovery module
-   logic [9:0] 	vcount_rec; //vcount from recovery module
-   logic 	data_valid_rec; //single-cycle (74.25 MHz) valid data from recovery module
-
-   //The recover module takes in information from the camera
-   // and sends out:
-   // * 5-6-5 pixels of camera information
-   // * corresponding hcount and vcount for that pixel
-   // * single-cycle valid indicator
-   recover recover_m 
-     (
-      .valid_pixel_in(valid_pixel),
-      .pixel_in(cam_pixel),
-      .frame_done_in(frame_done),
-      .system_clk_in(clk_pixel),
+   camera_bare cbm
+     (.clk_pixel_in(clk_camera),
+      .pclk_cam_in(pmodb_buf[0] ),
+      .hs_cam_in(pmodb_buf[2]),
+      .vs_cam_in(pmodb_buf[1]),
       .rst_in(sys_rst),
-      .pixel_out(pixel_data_rec), //processed pixel data out
-      .data_valid_out(data_valid_rec), //single-cycle valid indicator
-      .hcount_out(hcount_rec), //corresponding hcount of camera pixel
-      .vcount_out(vcount_rec) //corresponding vcount of camera pixel
+      .data_cam_in(pmoda_buf),
+      .hs_cam_out(hsync_raw),
+      .vs_cam_out(vsync_raw),
+      .data_out(data),
+      .valid_out(valid_pixel),
+      .clk_rise(clk_rise)
       );
 
+   assign vsync = vsync_raw; // invert here if hsync/vsync is wrong polarity!
+   assign hsync = hsync_raw;
+   
+   
+   logic 	valid_cc;
+   logic [15:0] pixel_cc;
+   logic [10:0] hcount_cc;
+   logic [9:0] 	vcount_cc;
+
+   camera_coord ccm
+     (.clk_in(clk_camera),
+      .rst_in(sys_rst),
+      .valid_in(valid_pixel),
+      .data_in(data),
+      .hsync_in(hsync),
+      .vsync_in(vsync),
+      .valid_out(valid_cc),
+      .data_out(pixel_cc),
+      .hcount_out(hcount_cc),
+      .vcount_out(vcount_cc)
+      );
+
+
+   
    logic [16:0] memaddr_cam;
-   assign memaddr_cam = hcount_rec + 320*vcount_rec;
+   assign memaddr_cam = hcount_cc + 320*vcount_cc;
 
-   // pipeline of recover module output
-   parameter PIPE_REC = 4;
-   logic [16:0] memaddr_cam_pipe [PIPE_REC-1:0];
-   logic [15:0] pixel_data_rec_pipe [PIPE_REC-1:0];
-   logic 	data_valid_rec_pipe [PIPE_REC-1:0];
+   // pipeline of camera coord module output
+   parameter PIPE_CC = 4;
+   logic [16:0] memaddr_cam_pipe [PIPE_CC-1:0];
+   logic [15:0] pixel_data_cc_pipe [PIPE_CC-1:0];
+   logic 	data_valid_cc_pipe [PIPE_CC-1:0];
 
-   always_ff @(posedge clk_pixel) begin
+   always_ff @(posedge clk_camera) begin
       if (sys_rst) begin
 	 memaddr_cam_pipe[0] <= 0;
-	 pixel_data_rec_pipe[0] <= 0;
-	 data_valid_rec_pipe[0] <= 0;
+	 pixel_data_cc_pipe[0] <= 0;
+	 data_valid_cc_pipe[0] <= 0;
       end else begin
 	 memaddr_cam_pipe[0] <= memaddr_cam;
-	 pixel_data_rec_pipe[0] <= pixel_data_rec;
-	 data_valid_rec_pipe[0] <= data_valid_rec;
-	 for( int i=1; i<PIPE_REC; i+=1 ) begin
+	 pixel_data_cc_pipe[0] <= pixel_cc;
+	 data_valid_cc_pipe[0] <= valid_cc;
+	 for( int i=1; i<PIPE_CC; i+=1 ) begin
 	    memaddr_cam_pipe[i] <= memaddr_cam_pipe[i-1];
-	    pixel_data_rec_pipe[i] <= pixel_data_rec_pipe[i-1];
-	    data_valid_rec_pipe[i] <= data_valid_rec_pipe[i-1];
+	    pixel_data_cc_pipe[i] <= pixel_data_cc_pipe[i-1];
+	    data_valid_cc_pipe[i] <= data_valid_cc_pipe[i-1];
 	 end
-      end
-   end // always_ff @ (posedge clk_pixel)
+      end // else: !if(sys_rst)
+   end // always_ff @ (posedge clk_camera)
+   
 	 
 
    // trail iir algorithm; 
@@ -150,9 +144,9 @@ module top_level(
 
    logic [23:0] 	   camera_pixel_full;
    assign camera_pixel_full = {
-			       pixel_data_rec_pipe[1][15:11], 3'b0,
-			       pixel_data_rec_pipe[1][10:5], 2'b0,
-			       pixel_data_rec_pipe[1][4:0], 3'b0
+			       pixel_data_cc_pipe[1][15:11], 3'b0,
+			       pixel_data_cc_pipe[1][10:5], 2'b0,
+			       pixel_data_cc_pipe[1][4:0], 3'b0
 			       };
 
    logic [23:0] 	   update_pixel_full;
@@ -165,11 +159,20 @@ module top_level(
    
    logic 		   data_valid_iir;
 
+   assign led[15:0] = (sw[0] ?
+		      ( sw[1] ?
+			update_pixel : pixel_data_cc_pipe[1] ) :
+		       (sw[1] ?
+			pixel_cc : data));
+   
+
+   
    trail_iir trail_generator
-     (.clk_in(clk_pixel),
+     (.clk_in(clk_camera),
       .rst_in(sys_rst),
       .threshold_in(threshold),
-      .valid_in(data_valid_rec_pipe[1]),
+      .mask_in(sw[2]),
+      .valid_in(data_valid_cc_pipe[1]),
       .history_in(history_pixel_full),
       .camera_in(camera_pixel_full),
       .update_out(update_pixel_full),
@@ -187,7 +190,7 @@ module top_level(
    frame_buffer_iir
      (// port a
       .addra(memaddr_cam),
-      .clka(clk_pixel),
+      .clka(clk_camera),
       .wea(1'b0),
       .dina(),
       .ena(1'b1),
@@ -196,7 +199,7 @@ module top_level(
       .douta(history_pixel),
       // port b
       .addrb(memaddr_cam_pipe[3]),
-      .clkb(clk_pixel),
+      .clkb(clk_camera),
       .web(data_valid_iir),
       .dinb(update_pixel),
       .enb(1'b1),
@@ -218,17 +221,16 @@ module top_level(
    logic [10:0] hcount_scaled; //scaled hcount for looking up camera frame pixel
    logic [9:0] 	vcount_scaled; //scaled vcount for looking up camera frame pixel
    logic 	valid_addr_scaled; //whether or not two values above are valid (or out of frame)   
-
-   //outputs of the rotation module
-   logic [16:0] img_addr_rot; //result of image transformation rotation
-   logic 	valid_addr_rot; //forward propagated valid_addr_scaled
-   logic [1:0] 	valid_addr_rot_pipe; //pipelining variables in || with frame_buffer
+   logic [16:0] img_addr_scaled;
+   
+   
+   logic [1:0] 	valid_addr_scaled_pipe; //pipelining variables in || with frame_buffer
 
 
    // output of the memory read
    logic [COLOR_DEPTH-1:0] pixel_vsg_raw;
    logic [COLOR_DEPTH-1:0] pixel_vsg;
-   
+
    
    // two port BRAM for VSG; written data matches exactly between both BRAMs!
    xilinx_true_dual_port_read_first_2_clock_ram
@@ -236,17 +238,17 @@ module top_level(
        .RAM_DEPTH(320*240))
    frame_buffer_vsg
      (//port a
-      .addra(img_addr_rot),
+      .addra(img_addr_scaled),
       .clka(clk_pixel),
       .dina(),
-      .ena(valid_addr_rot),
+      .ena(valid_addr_scaled),
       .regcea(1'b1),
       .wea(1'b0),
       .douta(pixel_vsg_raw),
       .rsta(sys_rst),
       // port b
       .addrb(memaddr_cam_pipe[3]),
-      .clkb(clk_pixel),
+      .clkb(clk_camera),
       .web(data_valid_iir),
       .dinb(update_pixel),
       .enb(1'b1),
@@ -269,34 +271,22 @@ module top_level(
    
    scale scale_m
      (
-      .scale_in({sw[0],btn[1]}),
+      .scale_in(sw[1:0]),
       .hcount_in(hcount_vsg),
       .vcount_in(vcount_vsg),
       .scaled_hcount_out(hcount_scaled),
       .scaled_vcount_out(vcount_scaled),
       .valid_addr_out(valid_addr_scaled)
       );
+   assign img_addr_scaled = 320*vcount_scaled + hcount_scaled;
 
-
-   //Rotates and mirror-images Image to render correctly (pi/2 CCW rotate):
-   // The output address should be fed right into the frame buffer for lookup
-   rotate rotate_m 
-     (
-      .clk_in(clk_pixel),
-      .rst_in(sys_rst),
-      .hcount_in(hcount_scaled),
-      .vcount_in(vcount_scaled),
-      .valid_addr_in(valid_addr_scaled),
-      .pixel_addr_out(img_addr_rot),
-      .valid_addr_out(valid_addr_rot)
-      );
    // pipe valid addr timing!
    always_ff @(posedge clk_pixel)begin
-      valid_addr_rot_pipe[0] <= valid_addr_rot;
-      valid_addr_rot_pipe[1] <= valid_addr_rot_pipe[0];
+      valid_addr_scaled_pipe[0] <= valid_addr_scaled;
+      valid_addr_scaled_pipe[1] <= valid_addr_scaled_pipe[0];
    end
 
-   assign pixel_vsg = valid_addr_rot_pipe[1] ? pixel_vsg_raw : 0;
+   assign pixel_vsg = valid_addr_scaled_pipe[1] ? pixel_vsg_raw : 0;
 
    logic [7:0] red;
    logic [7:0] green;

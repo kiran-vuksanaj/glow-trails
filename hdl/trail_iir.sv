@@ -9,6 +9,7 @@ module trail_iir
    (
     input wire 		clk_in,
     input wire 		rst_in,
+    input wire 		mask_in,
     input wire [7:0] 	threshold_in,
     input wire 		valid_in,
     input wire [23:0] 	history_in,
@@ -76,7 +77,11 @@ module trail_iir
 	 
       end else if (valid_buf) begin
 	 valid_out <= 1'b1;
-	 update_out <= (history_y > camera_y && history_y > threshold_in) ? hisbuf_decay : camera_buf;
+	 if (mask_in) begin // extra stuff, just to see the threshold
+	    update_out <= (camera_y > threshold_in) ? camera_buf : 24'b0;
+	 end else begin
+	    update_out <= (history_y > camera_y && history_y > threshold_in) ? hisbuf_decay : camera_buf;
+	 end
 	 
       end else begin
 	 valid_out <= 1'b0;
