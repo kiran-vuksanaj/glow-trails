@@ -8,7 +8,7 @@ module memory
     input wire row,
     input wire column,
     output logic valid,
-	output logic app_addr_mt,
+	output logic app_addr_mt
 	);
    // your code here
 	
