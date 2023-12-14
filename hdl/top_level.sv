@@ -410,8 +410,57 @@ module top_level(
    
    // Documentation: https://docs.xilinx.com/v/u/en-US/ug586_7Series_MIS
    
+   logic [6:0] mem_queries [9:0];
+   logic [9:0] memq_index;
+   logic [9:0] memq_read_index;
    
-   logic [128:0] fifo; 
+   logic [16:0] camera_loc;
+   // hcount_cc, vcount_cc
+   assign camera_loc = hcount_cc + vcount*320;
+   logic trailfetch_state;
+   logic [14:0] trailfetch_addr;
+   logic [5:0] trailfetch_index;
+   logic [128:0] trail_fifo [5:0]; 
+   
+   
+   always_ff @(posedge ui_clk) begin
+	if ((camera_loc)>>4 < (camera_loc+1)>>4) begin
+		trailfetch_state <= 1;
+		trailfetch_addr <= (camera_loc+1) >> 4;
+		
+	end
+   end
+   
+   always_ff @(posedge ui_clk) begin
+	if (trailfetch_state == 1) begin
+		app_addr <= trailfetch_addr;
+		app_cmd <= 1;
+		app_en <= 1;
+		mem_queries[memq_index] <= {1, trailfetch_index};
+		memq_index <= memq_index + 1;
+	end
+   end
+   
+   
+   always_ff @(posedge ui_clk) begin
+	if (app_rd_data_valid) begin
+		trail_fifo[mem_queries[memq_read_index][5:0]] <= app_rd_data;
+		memq_read_index <= memq_read_index + 1;
+	end
+   end
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
    
   wire clk_100, clk_200;
   ddr3_clk ddr3_clk_inst (
