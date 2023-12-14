@@ -19,7 +19,7 @@ module top_level(
 		 output logic 	     uart_txd
 		 );
 
-   parameter COLOR_DEPTH = 12;
+   parameter COLOR_DEPTH = 16;
 
    // assign led = sw; //for debugging
    // //shut up those rgb LEDs (active high):
@@ -109,7 +109,7 @@ module top_level(
    assign memaddr_cam = hcount_cc + 320*vcount_cc;
 
    // pipeline of camera coord module output
-   parameter PIPE_CC = 4;
+   parameter PIPE_CC = 5;
    logic [16:0] memaddr_cam_pipe [PIPE_CC-1:0];
    logic [15:0] pixel_data_cc_pipe [PIPE_CC-1:0];
    logic 	data_valid_cc_pipe [PIPE_CC-1:0];
@@ -137,34 +137,27 @@ module top_level(
    logic [COLOR_DEPTH-1:0] history_pixel;
    logic [23:0] 	   history_pixel_full;
    assign history_pixel_full = {
-				history_pixel[11:8],4'b0,
-				history_pixel[7:4],4'b0,
-				history_pixel[3:0],4'b0
+				history_pixel[15:11],3'b0,
+				history_pixel[10:5],2'b0,
+				history_pixel[4:0],3'b0
 				};
 
    logic [23:0] 	   camera_pixel_full;
    assign camera_pixel_full = {
-			       pixel_data_cc_pipe[1][15:11], 3'b0,
-			       pixel_data_cc_pipe[1][10:5], 2'b0,
-			       pixel_data_cc_pipe[1][4:0], 3'b0
+			       pixel_data_cc_pipe[2][15:11], 3'b0,
+			       pixel_data_cc_pipe[2][10:5], 2'b0,
+			       pixel_data_cc_pipe[2][4:0], 3'b0
 			       };
 
    logic [23:0] 	   update_pixel_full;
    logic [COLOR_DEPTH-1:0] update_pixel;
    assign update_pixel = {
-			  update_pixel_full[23:20],
-			  update_pixel_full[15:12],
-			  update_pixel_full[7:4]
+			  update_pixel_full[23:19],
+			  update_pixel_full[15:10],
+			  update_pixel_full[7:3]
 			  };
    
    logic 		   data_valid_iir;
-
-   assign led[15:0] = (sw[0] ?
-		      ( sw[1] ?
-			update_pixel : pixel_data_cc_pipe[1] ) :
-		       (sw[1] ?
-			pixel_cc : data));
-   
 
    
    trail_iir trail_generator
@@ -172,7 +165,7 @@ module top_level(
       .rst_in(sys_rst),
       .threshold_in(threshold),
       .mask_in(sw[2]),
-      .valid_in(data_valid_cc_pipe[1]),
+      .valid_in(data_valid_cc_pipe[2]),
       .history_in(history_pixel_full),
       .camera_in(camera_pixel_full),
       .update_out(update_pixel_full),
@@ -181,33 +174,6 @@ module top_level(
 
 			       
 
-
-   // two port BRAM for IIR update; written data matches exactly between both BRAMs!
-   // port B is wired to write iir output, port A is wired to read iir input, with proper clock delays
-   xilinx_true_dual_port_read_first_2_clock_ram 
-     #(.RAM_WIDTH(COLOR_DEPTH), // 8
-       .RAM_DEPTH(320*240))
-   frame_buffer_iir
-     (// port a
-      .addra(memaddr_cam),
-      .clka(clk_camera),
-      .wea(1'b0),
-      .dina(),
-      .ena(1'b1),
-      .regcea(1'b1),
-      .rsta(sys_rst),
-      .douta(history_pixel),
-      // port b
-      .addrb(memaddr_cam_pipe[3]),
-      .clkb(clk_camera),
-      .web(data_valid_iir),
-      .dinb(update_pixel),
-      .enb(1'b1),
-      .regceb(1'b1),
-      .doutb()
-      );
-
-   
    //Signals related to driving the video pipeline
    logic [10:0] hcount_vsg; //horizontal count
    logic [9:0] 	vcount_vsg; //vertical count
@@ -227,6 +193,41 @@ module top_level(
    logic [1:0] 	valid_addr_scaled_pipe; //pipelining variables in || with frame_buffer
 
 
+   // module to manage double usage of single port: parallel bram interface
+   // adds 1 cycle of latency to reads, consistent
+   // adds 1-2 cycles of latency to writes
+   // relies on <50% usage of clock cycles, which is in fact true!
+   logic [16:0] pbi_addr;
+   logic [COLOR_DEPTH-1:0] pbi_din;
+   logic 		   pbi_we;
+
+   // temp
+   logic 		   probe_state;
+   
+   
+   parallel_brami
+     #(.RAM_WIDTH(COLOR_DEPTH),
+       .RAM_DEPTH(320*240)
+       ) pbi
+       (.clk_in(clk_camera),
+	.rst_in(sys_rst),
+	// write-pseudoport
+	.valid_wr_in(data_valid_iir),
+	.addr_wr_in(memaddr_cam_pipe[4]),
+	.data_wr_in(update_pixel),
+	// read-pseudoport
+	.valid_rd_in(valid_cc),
+	.addr_rd_in(memaddr_cam),
+	// bram connections
+	.addr_br(pbi_addr),
+	.we_br(pbi_we),
+	.din_br(pbi_din),
+	// temp
+	.probe_state(probe_state)
+	);
+	
+   assign led[15] = probe_state;
+   
    // output of the memory read
    logic [COLOR_DEPTH-1:0] pixel_vsg_raw;
    logic [COLOR_DEPTH-1:0] pixel_vsg;
@@ -247,13 +248,13 @@ module top_level(
       .douta(pixel_vsg_raw),
       .rsta(sys_rst),
       // port b
-      .addrb(memaddr_cam_pipe[3]),
+      .addrb(pbi_addr),
       .clkb(clk_camera),
-      .web(data_valid_iir),
-      .dinb(update_pixel),
+      .web(pbi_we),
+      .dinb(pbi_din),
       .enb(1'b1),
       .regceb(1'b1),
-      .doutb()
+      .doutb(history_pixel) // read pseudoport connects to iir history from above
       );
 
   //from week 04! (make sure you include in your hdl) (same as before)
@@ -292,13 +293,22 @@ module top_level(
    logic [7:0] green;
    logic [7:0] blue;
    
-   assign red = {pixel_vsg[11:8],4'b0};
-   assign green = {pixel_vsg[7:4],4'b0};
-   assign blue = {pixel_vsg[3:0],4'b0};
+   assign red = {pixel_vsg[15:11],3'b0};
+   assign green = {pixel_vsg[10:5],2'b0};
+   assign blue = {pixel_vsg[4:0],3'b0};
 
    logic [9:0] tmds_10b [0:2]; //output of each TMDS encoder!
    logic       tmds_signal [2:0]; //output of each TMDS serializer!
 
+   assign led[14:0] = (sw[0] ?
+		       ( sw[1] ?
+			 memaddr_cam_pipe[4] : memaddr_cam ) :
+		       (sw[1] ?
+			pbi_addr : pbi_din));
+   
+
+
+   
    //three tmds_encoders (blue, green, red)
    tmds_encoder tmds_red
      (
@@ -360,17 +370,18 @@ module top_level(
    
    // manta!
    // manta manta_inst
-   //   (.clk(clk_pixel),
+   //   (.clk(clk_camera),
    //    .rx(uart_rxd),
    //    .tx(uart_txd),
-   //    .data_valid_rec(data_valid_rec),
-   //    .memaddr_cam(memaddr_cam),
-   //    .hcount_rec(hcount_rec),
-   //    .vcount_rec(vcount_rec),
-   //    .pixel_data_rec(pixel_data_rec),
-   //    .memaddr_cam0(memaddr_cam_pipe[2]),
-   //    .data_valid0(data_valid_rec_pipe[2]),
-   //    .pixel_data0(pixel_data_rec_pipe[2])
+   //    .data_wr(update_pixel),
+   //    .addr_wr(memaddr_cam_pipe[4]),
+   //    .valid_wr(data_valid_iir),
+   //    .valid_rd(valid_cc),
+   //    .addr_rd(memaddr_cam),
+   //    .we_br(pbi_we),
+   //    .addr_br(pbi_addr),
+   //    .data_br(pbi_din),
+   //    .state(probe_state)
    //    );
 
 
