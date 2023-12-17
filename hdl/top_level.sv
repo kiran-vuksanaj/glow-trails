@@ -6,48 +6,20 @@ module top_level(
 		 input wire [15:0]   sw, //all 16 input slide switches
 		 input wire [3:0]    btn, //all four momentary button switches
 		 output logic [15:0] led, //16 green output LEDs (located right above switches)
-		output logic [2:0]  rgb0, //rgb led
-		output logic [2:0]  rgb1, //rgb led
-		output logic [2:0]  hdmi_tx_p, //hdmi output signals (blue, green, red)
-		output logic [2:0]  hdmi_tx_n, //hdmi output signals (negatives)
-		output logic 	     hdmi_clk_p, hdmi_clk_n, //differential hdmi clock
-		input wire [7:0]    pmoda,
-		input wire [2:0]    pmodb,
-		output logic 	     pmodbclk,
-		output logic 	     pmodblock,
-		input wire 	     uart_rxd,
-		output logic 	     uart_txd,
-		inout   wire    [15:0]  ddr3_dq,
-		inout   wire    [1:0]   ddr3_dqs_n,
-		inout   wire    [1:0]   ddr3_dqs_p,
-		output  wire    [12:0]  ddr3_addr,
-		output  wire    [2:0]   ddr3_ba,
-		output  wire            ddr3_ras_n,
-		output  wire            ddr3_cas_n,
-		output  wire            ddr3_we_n,
-		output  wire            ddr3_reset_n,
-		output  wire            ddr3_ck_p,
-		output  wire            ddr3_ck_n,
-		output  wire            ddr3_cke,
-		output  wire    [1:0]   ddr3_dm,
-		output  wire            ddr3_odt,
-		inout   wire    [15:0]  ddr3_dq_mt,
-		inout   wire    [1:0]   ddr3_dqs_n_mt,
-		inout   wire    [1:0]   ddr3_dqs_p_mt,
-		output  wire    [12:0]  ddr3_addr_mt,
-		output  wire    [2:0]   ddr3_ba_mt,
-		output  wire            ddr3_ras_n_mt,
-		output  wire            ddr3_cas_n_mt,
-		output  wire            ddr3_we_n_mt,
-		output  wire            ddr3_reset_n_mt,
-		output  wire            ddr3_ck_p_mt,
-		output  wire            ddr3_ck_n_mt,
-		output  wire            ddr3_cke_mt,
-		output  wire    [1:0]   ddr3_dm_mt,
-		output  wire            ddr3_odt_mt
-		);
+		 output logic [2:0]  rgb0, //rgb led
+		 output logic [2:0]  rgb1, //rgb led
+		 output logic [2:0]  hdmi_tx_p, //hdmi output signals (blue, green, red)
+		 output logic [2:0]  hdmi_tx_n, //hdmi output signals (negatives)
+		 output logic 	     hdmi_clk_p, hdmi_clk_n, //differential hdmi clock
+		 input wire [7:0]    pmoda,
+		 input wire [2:0]    pmodb,
+		 output logic 	     pmodbclk,
+		 output logic 	     pmodblock,
+		 input wire 	     uart_rxd,
+		 output logic 	     uart_txd
+		 );
 
-   parameter COLOR_DEPTH = 12;
+   parameter COLOR_DEPTH = 16;
 
    // assign led = sw; //for debugging
    // //shut up those rgb LEDs (active high):
@@ -137,7 +109,7 @@ module top_level(
    assign memaddr_cam = hcount_cc + 320*vcount_cc;
 
    // pipeline of camera coord module output
-   parameter PIPE_CC = 4;
+   parameter PIPE_CC = 5;
    logic [16:0] memaddr_cam_pipe [PIPE_CC-1:0];
    logic [15:0] pixel_data_cc_pipe [PIPE_CC-1:0];
    logic 	data_valid_cc_pipe [PIPE_CC-1:0];
@@ -165,34 +137,27 @@ module top_level(
    logic [COLOR_DEPTH-1:0] history_pixel;
    logic [23:0] 	   history_pixel_full;
    assign history_pixel_full = {
-				history_pixel[11:8],4'b0,
-				history_pixel[7:4],4'b0,
-				history_pixel[3:0],4'b0
+				history_pixel[15:11],3'b0,
+				history_pixel[10:5],2'b0,
+				history_pixel[4:0],3'b0
 				};
 
    logic [23:0] 	   camera_pixel_full;
    assign camera_pixel_full = {
-			       pixel_data_cc_pipe[1][15:11], 3'b0,
-			       pixel_data_cc_pipe[1][10:5], 2'b0,
-			       pixel_data_cc_pipe[1][4:0], 3'b0
+			       pixel_data_cc_pipe[2][15:11], 3'b0,
+			       pixel_data_cc_pipe[2][10:5], 2'b0,
+			       pixel_data_cc_pipe[2][4:0], 3'b0
 			       };
 
    logic [23:0] 	   update_pixel_full;
    logic [COLOR_DEPTH-1:0] update_pixel;
    assign update_pixel = {
-			  update_pixel_full[23:20],
-			  update_pixel_full[15:12],
-			  update_pixel_full[7:4]
+			  update_pixel_full[23:19],
+			  update_pixel_full[15:10],
+			  update_pixel_full[7:3]
 			  };
    
    logic 		   data_valid_iir;
-
-   assign led[15:0] = (sw[0] ?
-		      ( sw[1] ?
-			update_pixel : pixel_data_cc_pipe[1] ) :
-		       (sw[1] ?
-			pixel_cc : data));
-   
 
    
    trail_iir trail_generator
@@ -200,7 +165,7 @@ module top_level(
       .rst_in(sys_rst),
       .threshold_in(threshold),
       .mask_in(sw[2]),
-      .valid_in(data_valid_cc_pipe[1]),
+      .valid_in(data_valid_cc_pipe[2]),
       .history_in(history_pixel_full),
       .camera_in(camera_pixel_full),
       .update_out(update_pixel_full),
@@ -209,33 +174,6 @@ module top_level(
 
 			       
 
-
-   // two port BRAM for IIR update; written data matches exactly between both BRAMs!
-   // port B is wired to write iir output, port A is wired to read iir input, with proper clock delays
-   xilinx_true_dual_port_read_first_2_clock_ram 
-     #(.RAM_WIDTH(COLOR_DEPTH), // 8
-       .RAM_DEPTH(320*240))
-   frame_buffer_iir
-     (// port a
-      .addra(memaddr_cam),
-      .clka(clk_camera),
-      .wea(1'b0),
-      .dina(),
-      .ena(1'b1),
-      .regcea(1'b1),
-      .rsta(sys_rst),
-      .douta(history_pixel),
-      // port b
-      .addrb(memaddr_cam_pipe[3]),
-      .clkb(clk_camera),
-      .web(data_valid_iir),
-      .dinb(update_pixel),
-      .enb(1'b1),
-      .regceb(1'b1),
-      .doutb()
-      );
-
-   
    //Signals related to driving the video pipeline
    logic [10:0] hcount_vsg; //horizontal count
    logic [9:0] 	vcount_vsg; //vertical count
@@ -255,6 +193,41 @@ module top_level(
    logic [1:0] 	valid_addr_scaled_pipe; //pipelining variables in || with frame_buffer
 
 
+   // module to manage double usage of single port: parallel bram interface
+   // adds 1 cycle of latency to reads, consistent
+   // adds 1-2 cycles of latency to writes
+   // relies on <50% usage of clock cycles, which is in fact true!
+   logic [16:0] pbi_addr;
+   logic [COLOR_DEPTH-1:0] pbi_din;
+   logic 		   pbi_we;
+
+   // temp
+   logic 		   probe_state;
+   
+   
+   parallel_brami
+     #(.RAM_WIDTH(COLOR_DEPTH),
+       .RAM_DEPTH(320*240)
+       ) pbi
+       (.clk_in(clk_camera),
+	.rst_in(sys_rst),
+	// write-pseudoport
+	.valid_wr_in(data_valid_iir),
+	.addr_wr_in(memaddr_cam_pipe[4]),
+	.data_wr_in(update_pixel),
+	// read-pseudoport
+	.valid_rd_in(valid_cc),
+	.addr_rd_in(memaddr_cam),
+	// bram connections
+	.addr_br(pbi_addr),
+	.we_br(pbi_we),
+	.din_br(pbi_din),
+	// temp
+	.probe_state(probe_state)
+	);
+	
+   assign led[15] = probe_state;
+   
    // output of the memory read
    logic [COLOR_DEPTH-1:0] pixel_vsg_raw;
    logic [COLOR_DEPTH-1:0] pixel_vsg;
@@ -275,13 +248,13 @@ module top_level(
       .douta(pixel_vsg_raw),
       .rsta(sys_rst),
       // port b
-      .addrb(memaddr_cam_pipe[3]),
+      .addrb(pbi_addr),
       .clkb(clk_camera),
-      .web(data_valid_iir),
-      .dinb(update_pixel),
+      .web(pbi_we),
+      .dinb(pbi_din),
       .enb(1'b1),
       .regceb(1'b1),
-      .doutb()
+      .doutb(history_pixel) // read pseudoport connects to iir history from above
       );
 
   //from week 04! (make sure you include in your hdl) (same as before)
@@ -320,13 +293,22 @@ module top_level(
    logic [7:0] green;
    logic [7:0] blue;
    
-   assign red = {pixel_vsg[11:8],4'b0};
-   assign green = {pixel_vsg[7:4],4'b0};
-   assign blue = {pixel_vsg[3:0],4'b0};
+   assign red = {pixel_vsg[15:11],3'b0};
+   assign green = {pixel_vsg[10:5],2'b0};
+   assign blue = {pixel_vsg[4:0],3'b0};
 
    logic [9:0] tmds_10b [0:2]; //output of each TMDS encoder!
    logic       tmds_signal [2:0]; //output of each TMDS serializer!
 
+   assign led[14:0] = (sw[0] ?
+		       ( sw[1] ?
+			 memaddr_cam_pipe[4] : memaddr_cam ) :
+		       (sw[1] ?
+			pbi_addr : pbi_din));
+   
+
+
+   
    //three tmds_encoders (blue, green, red)
    tmds_encoder tmds_red
      (
@@ -388,335 +370,19 @@ module top_level(
    
    // manta!
    // manta manta_inst
-   //   (.clk(clk_pixel),
+   //   (.clk(clk_camera),
    //    .rx(uart_rxd),
    //    .tx(uart_txd),
-   //    .data_valid_rec(data_valid_rec),
-   //    .memaddr_cam(memaddr_cam),
-   //    .hcount_rec(hcount_rec),
-   //    .vcount_rec(vcount_rec),
-   //    .pixel_data_rec(pixel_data_rec),
-   //    .memaddr_cam0(memaddr_cam_pipe[2]),
-   //    .data_valid0(data_valid_rec_pipe[2]),
-   //    .pixel_data0(pixel_data_rec_pipe[2])
+   //    .data_wr(update_pixel),
+   //    .addr_wr(memaddr_cam_pipe[4]),
+   //    .valid_wr(data_valid_iir),
+   //    .valid_rd(valid_cc),
+   //    .addr_rd(memaddr_cam),
+   //    .we_br(pbi_we),
+   //    .addr_br(pbi_addr),
+   //    .data_br(pbi_din),
+   //    .state(probe_state)
    //    );
-   
-   
-   ////////////////////////////
-   //                        //
-   //          DDR3          //
-   //                        //
-   ////////////////////////////
-   
-   // Documentation: https://docs.xilinx.com/v/u/en-US/ug586_7Series_MIS
-   
-   logic [6:0] mem_queries [9:0];
-   logic [9:0] memq_index;
-   logic [9:0] memq_read_index;
-   
-   logic [16:0] camera_loc;
-   // hcount_cc, vcount_cc
-   assign camera_loc = hcount_cc + vcount*320;
-   logic trailfetch_state;
-   logic [14:0] trailfetch_addr;
-   logic [5:0] trailfetch_index;
-   logic [128:0] trail_fifo [5:0]; 
-   
-   
-   always_ff @(posedge ui_clk) begin
-	if ((camera_loc)>>4 < (camera_loc+1)>>4) begin
-		trailfetch_state <= 1;
-		trailfetch_addr <= (camera_loc+1) >> 4;
-		
-	end
-   end
-   
-   always_ff @(posedge ui_clk) begin
-	if (trailfetch_state == 1) begin
-		app_addr <= trailfetch_addr;
-		app_cmd <= 1;
-		app_en <= 1;
-		mem_queries[memq_index] <= {1, trailfetch_index};
-		memq_index <= memq_index + 1;
-	end
-   end
-   
-   
-   always_ff @(posedge ui_clk) begin
-	if (app_rd_data_valid) begin
-		trail_fifo[mem_queries[memq_read_index][5:0]] <= app_rd_data;
-		memq_read_index <= memq_read_index + 1;
-	end
-   end
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-   
-  wire clk_100, clk_200;
-  ddr3_clk ddr3_clk_inst (
-    .clk_100(clk_100),
-    .clk_200(clk_200),
-    .clk_in1(clk_100mhz)
-  );
-  
-  // user interface signals
-  logic [26:0]      app_addr;
-  logic [2:0]       app_cmd;
-  logic             app_en;
-  logic [127:0]     app_wdf_data;
-  logic             app_wdf_end;
-  logic             app_wdf_wren;
-  logic [127:0]     app_rd_data;
-  logic           app_rd_data_end;
-  logic           app_rd_data_valid;
-  logic           app_rdy;
-  logic           app_wdf_rdy;
-  logic           app_sr_req;
-  logic           app_ref_req;
-  logic           app_zq_req;
-  logic           app_sr_active;
-  logic           app_ref_ack;
-  logic           app_zq_ack;
-  logic           ui_clk;
-  logic           ui_clk_sync_rst;
-  logic [15:0]    app_wdf_mask;
-  logic           init_calib_complete;
-  logic [11:0]    device_temp;
-  
-  // page 92
-  // Changed based on state in sample code
-  // app_addr - address for the current request
-  // app_cmd - command for the current request
-  // app_en - This is the active-High strobe for the app_addr[], app_cmd[2:0], app_sz, and app_hi_pri inputs.
-  // app_wdf_data - 
-  // app_wdf_end
-  // app_wdf_wren
-  // app_wdf_mask
-  
-  // More inputs
-  // app_sr_req
-  // app_ref_req
-  // app_zq_req
-  // sys_rst
-  
-  
-  logic [26:0] hdmi_addr;
-  logic [26:0] trail_addr;
-  logic [26:0] write_addr; //Same as trail_addr?
-  
-  // app_addr = trail_addr;
-  // app_cmd = 0; // write is 0, read is 1
-  // app_en = 1; // 1 when you want to interact, 0 when you don't
-  // app_wdf_data = {red, green, blue}// data being written
-  // app_wdf_end = 1; // app_wdf_data is the last piece of data for the current request
-  // app_wdf_mask = 0; // every spot with a 1 is masked (not written to memory)
-  // app_wdf_wren = 1; // data on add_wdf_data is valid, in example code it matched end?
-   
-  logic [10:0] state;
-   
-  always_ff @(posedge ui_clk) begin
-	if (state == 0) begin
-		state <= 1;
-	end else if (state == 1) begin
-		state <= 2;
-	end else if (state == 2) begin
-		state <= 3;
-	end else if (state == 3) begin
-		state <= 4;
-	end else if (state == 4) begin
-		state <= 5;
-	end else if (state == 5) begin
-		state <= 6;
-	end else if (state == 6) begin
-		if (app_rdy) begin
-			state <= 7;
-		end else begin
-			state <= 0;
-		end
-	end else if (state == 7) begin
-		state <= 0;
-	end
-  end
-   
-  always_comb begin
-	// Make request
-	if (state == 0) begin
-		app_wdf_data[119:96] = {red, green, blue};
-		app_en = 0;
-	end else if (state == 1) begin
-		app_wdf_data[95:72] = {red, green, blue};
-		app_en = 0;
-	end else if (state == 2) begin
-		app_wdf_data[71:48] = {red, green, blue};
-		app_en = 0;
-	end else if (state == 3) begin
-		app_wdf_data[47:24] = {red, green, blue};
-		app_en = 0;
-	end else if (state == 4) begin
-		app_wdf_data[23:0] = {red, green, blue};
-		app_en = 0;
-	// Send request
-	end else if (state == 5 && app_wdf_rdy) begin
-		app_addr = trail_addr;
-		app_cmd = 0; // writing
-		app_en = 1;
-		app_wdf_end = 1;
-		app_wdf_mask = 0;
-		app_wdf_wren = 1;
-	// Check request was received
-	end else if (state == 6) begin
-		if (app_rdy == 0) begin // not accepted
-			
-		end
-	end
-  end
-  
-  always_comb begin
-	if (trailstate == 0) begin
-		
-	end
-  end
-  
-  
-  mig_data_out = app_rd_data;
-   
-  ddr3_mig ddr3_mig_inst (
-  // These parameters are in the input/output of the top_level
-    .ddr3_dq(ddr3_dq),
-    .ddr3_dqs_n(ddr3_dqs_n),
-    .ddr3_dqs_p(ddr3_dqs_p),
-    .ddr3_addr(ddr3_addr),
-    .ddr3_ba(ddr3_ba),
-    .ddr3_ras_n(ddr3_ras_n),
-    .ddr3_cas_n(ddr3_cas_n),
-    .ddr3_we_n(ddr3_we_n),
-    .ddr3_reset_n(ddr3_reset_n),
-    .ddr3_ck_p(ddr3_ck_p),
-    .ddr3_ck_n(ddr3_ck_n),
-    .ddr3_cke(ddr3_cke),
-    .ddr3_dm(ddr3_dm),
-    .ddr3_odt(ddr3_odt),
-	// These parameters I change
-    .sys_clk_i(clk_200),
-    .app_addr(app_addr),
-    .app_cmd(app_cmd),
-    .app_en(app_en),
-    .app_wdf_data(app_wdf_data),
-    .app_wdf_end(app_wdf_end),
-    .app_wdf_wren(app_wdf_wren),
-    .app_rd_data(app_rd_data),
-    .app_rd_data_end(app_rd_data_end),
-    .app_rd_data_valid(app_rd_data_valid),
-    .app_rdy(app_rdy),
-    .app_wdf_rdy(app_wdf_rdy), 
-    .app_sr_req(app_sr_req),
-    .app_ref_req(app_ref_req),
-    .app_zq_req(app_zq_req),
-    .app_sr_active(app_sr_active),
-    .app_ref_ack(app_ref_ack),
-    .app_zq_ack(app_zq_ack),
-    .ui_clk(ui_clk), 
-    .ui_clk_sync_rst(ui_clk_sync_rst),
-    .app_wdf_mask(app_wdf_mask),
-    .init_calib_complete(init_calib_complete),
-    .device_temp(device_temp),
-    .sys_rst(!sys_rst_200) // active low
-  );
-   
-   
-   
-   // Populating a FIFO given coordinates
-   
-   // memory mem_trail(
-   
-   // )
-   
-  logic [26:0] hdmi_addr;
-  logic [26:0] trail_addr;
-  logic [26:0] trail_max_addr;
-  logic [26:0] hdmi_max_addr;
-  
-  logic [127:0] trail_buffer;
-  logic [127:0] hdmi_buffer;
-  
-  always_ff @(posedge ui_clk) begin
-	if (state == 0) begin
-		valid <= 0;
-		state <= 1;
-	end else if (state == 1) begin
-		if (app_rdy_mt) begin
-			state <= 2;
-		end
-	end else if (state == 2) begin
-		if (nextentry) begin
-			state <= 3;
-		end
-	end else if (state == 3) begin
-		state <= 0;
-		valid <= 1;
-		if (trail_addr < trail_max_addr) begin
-			trail_addr <= trail_addr + 1;
-		end else begin
-			trail_addr <= 0;
-		end
-	end
-  end
-   
-   
-   ddr3_mig ddr3_mig_mem_trail (
-  // These parameters are in the input/output of the top_level
-    .ddr3_dq(ddr3_dq_mt),  // Param
-    .ddr3_dqs_n(ddr3_dqs_n_mt), // Param
-    .ddr3_dqs_p(ddr3_dqs_p_mt),// Param
-    .ddr3_addr(ddr3_addr_mt), // Param
-    .ddr3_ba(ddr3_ba_mt), // Param
-    .ddr3_ras_n(ddr3_ras_n_mt), // Param
-    .ddr3_cas_n(ddr3_cas_n_mt), // Param
-    .ddr3_we_n(ddr3_we_n_mt), // Param
-    .ddr3_reset_n(ddr3_reset_n_mt), // Param
-    .ddr3_ck_p(ddr3_ck_p_mt), // Param
-    .ddr3_ck_n(ddr3_ck_n_mt), // Param
-    .ddr3_cke(ddr3_cke_mt), // Param
-    .ddr3_dm(ddr3_dm_mt), // Param
-    .ddr3_odt(ddr3_odt_mt), // Param
-	// These parameters I change
-    .sys_clk_i(clk_200),
-    .app_addr(trail_addr), // Address
-    .app_cmd(1), // Set to read
-    .app_en(valid), //
-    .app_wdf_data(app_wdf_data_mt), //write data empty
-    .app_wdf_end(app_wdf_end_mt), //write data empty
-    .app_wdf_wren(app_wdf_wren_mt), //write data empty
-    .app_rd_data(trail_buffer), // READ data output
-    .app_rd_data_end(app_rd_data_end_mt), // READ output
-    .app_rd_data_valid(app_rd_data_valid_mt), // READ valid output
-    .app_rdy(app_rdy_mt), // Tells you if request was approved
-    .app_wdf_rdy(app_wdf_rdy_mt),  // write data empty
-    .app_sr_req(app_sr_req_mt),
-    .app_ref_req(app_ref_req_mt),
-    .app_zq_req(app_zq_req_mt),
-    .app_sr_active(app_sr_active_mt),
-    .app_ref_ack(app_ref_ack_mt),
-    .app_zq_ack(app_zq_ack_mt),
-    .ui_clk(ui_clk_mt), 
-    .ui_clk_sync_rst(ui_clk_sync_rst_mt),
-    .app_wdf_mask(app_wdf_mask_mt),
-    .init_calib_complete(init_calib_complete_mt),
-    .device_temp(device_temp_mt),
-    .sys_rst(!sys_rst_200) // active low
-  );
-   
-   
 
 
 endmodule // top_level

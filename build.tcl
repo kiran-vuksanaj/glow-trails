@@ -35,9 +35,9 @@ set_part $partNum
 #synth_ip [get_ips]
 
 # Read in all IP
-read_ip ./ip/ddr3_mig/ddr3_mig.xci
-generate_target all [get_ips]
-synth_ip [get_ips]
+# read_ip ./ip/ddr3_mig/ddr3_mig.xci
+# generate_target all [get_ips]
+# synth_ip [get_ips]
 
 #Run Synthesis
 synth_design -top top_level -part $partNum -verbose
