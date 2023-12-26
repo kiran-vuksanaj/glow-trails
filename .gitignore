@@ -61,3 +61,8 @@ flycheck_*.el
 *.rpt
 *.out
 *.tar.gz
+
+*.jou
+.Xil/
+tight_setup_hold_pins.txt
+*.dcp
